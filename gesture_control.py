@@ -1,9 +1,31 @@
 import cv2
 import mediapipe as mp
+from voice_feedback import speak
+from speech_controller import start_voice_listener, get_voice_command, map_voice_to_gesture
+
+current_gesture = "NONE"
+current_speed = 0
+
+def get_current_state():
+    return current_gesture, current_speed
+
+last_gesture = None
+last_voice_command = None
 
 TIP_IDS = [4, 8, 12, 16, 20]
 speed = None
-# Initialize MediaPipe
+
+gesture_voice_map = {
+    "DRONE WILL GO UP": "Drone moving up",
+    "DRONE WILL MOVE FORWARD": "Drone moving forward",
+    "DRONE WILL GO BACKWARD": "Drone moving backward",
+    "DRONE WILL GO LEFT": "Drone moving left",
+    "DRONE WILL GO RIGHT": "Drone moving right",
+    "DRONE WILL LAND": "Drone landing",
+    "DRONE WILL FLIP": "Drone flipping",
+    "DRONE WILL STOP": "Drone stopped"
+}
+
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(
     static_image_mode=False,
@@ -14,14 +36,14 @@ hands = mp_hands.Hands(
 
 mp_draw = mp.solutions.drawing_utils
 
-# Initialize Camera
 cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 
-# Font settings
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 FONT_SCALE = 0.7
 COLOR_TEXT = (0, 255, 255)
 COLOR_FINGER = (0, 255, 0)
+
+start_voice_listener()
 
 import math
 
@@ -44,13 +66,11 @@ def distance_to_speed(distance):
     min_speed = 20
     max_speed = 100
 
-    # Clamp distance
     if distance < min_dist:
         distance = min_dist
     if distance > max_dist:
         distance = max_dist
 
-    # Linear mapping
     speed = ((distance - min_dist) / (max_dist - min_dist)) * (max_speed - min_speed) + min_speed
 
     return int(speed)
@@ -63,13 +83,11 @@ def detect_fingers(landmarks):
     """
     fingers = []
 
-    # Thumb (horizontal comparison)
     if landmarks[4].x > landmarks[3].x:
         fingers.append(1)
     else:
         fingers.append(0)
 
-    # Other 4 fingers (vertical comparison)
     for tip in TIP_IDS[1:]:
         if landmarks[tip].y < landmarks[tip - 2].y:
             fingers.append(1)
@@ -87,7 +105,7 @@ def detect_gesture(fingers):
         return "DRONE WILL GO UP"
 
     elif fingers == [1, 0, 0, 0, 0]:
-        return "DRONE WIL GO RIGHT"
+        return "DRONE WILL GO RIGHT"
 
     elif fingers == [0, 0, 0, 0, 1]:
         return "DRONE WILL GO LEFT"
@@ -110,27 +128,28 @@ def detect_gesture(fingers):
     else:
         return "NONE"
 
-
-# Main loop
 while True:
 
     ret, frame = cap.read()
-
+    gesture = "NONE"
     if not ret:
         print("Failed to read camera")
         break
 
-    # Flip image (fix mirror)
     frame = cv2.flip(frame, 1)
 
-    # Convert to RGB
     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-    # Process hand detection
     result = hands.process(frame_rgb)
 
     gesture = "NONE"
 
+    command = get_voice_command()
+    voice_action = map_voice_to_gesture(command)
+    if voice_action:
+        last_voice_command = voice_action
+        speak(voice_action)
+    
     if result.multi_hand_landmarks:
 
         for hand_landmarks in result.multi_hand_landmarks:
@@ -143,22 +162,48 @@ while True:
 
             cv2.line(frame, (x1, y1), (x2, y2), (255, 0, 255), 3)
 
-
-            # Detect fingers
             fingers = detect_fingers(landmarks)
 
-            # Detect gesture
             gesture = detect_gesture(fingers)
+
+            if gesture != last_gesture:
+            
+                if gesture in gesture_voice_map:
+                    speak(gesture_voice_map[gesture])
+            
+                last_gesture = gesture
+
+            if gesture == "UP":
+                speak("Drone moving up")
+            
+            elif gesture == "DRONE WILL MOVE FORWARD":
+                speak("Drone moving forward")
+            
+            elif gesture == "DRONE WILL GO BACKWARD":
+                speak("Drone moving backward")
+            
+            elif gesture == "DRONE WILL GO LEFT":
+                speak("Drone moving left")
+            
+            elif gesture == "DRONE WILL GO RIGHT":
+                speak("Drone moving right")
+            
+            elif gesture == "DRONE WILL LAND":
+                speak("Drone landing")
+            
+            elif gesture == "DRONE WILL FLIP":
+                speak("Drone flipping")
+            
+            elif gesture == "DRONE WILL STOP":
+                speak("Drone stopped")
+
             if gesture in ["DRONE WILL GO UP", "DRONE WILL MOVE FORWARD", "DRONE WILL GO BACKWARD"]:
                 speed = distance_to_speed(distance)
-            # Draw landmarks
             mp_draw.draw_landmarks(
                 frame,
                 hand_landmarks,
                 mp_hands.HAND_CONNECTIONS
             )
-
-    # Show gesture
     cv2.putText(
         frame,
         f"Gesture: {gesture}",
@@ -179,16 +224,21 @@ while True:
         (255, 255, 0),
         2
   )
+        
+    cv2.putText(
+        frame,
+        f"Voice: {last_voice_command}",
+        (10, 130),
+        FONT,
+        FONT_SCALE,
+        (0, 200, 255),
+        2
+    )
 
 
-    # Display window
     cv2.imshow("Gesture Controlled Drone", frame)
-
-    # Exit key
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
-
-# Cleanup
 cap.release()
 cv2.destroyAllWindows()
